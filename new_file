@@ -1,0 +1,182 @@
+import requests
+import threading
+import time
+import config
+
+""" todo:
+        0. Реализовать класс User 
+        
+        0.1 Реализовать метод set_new_data()                                
+        0.2 Реализовать проверку выхода при не закрытой вкладке
+        0.3 Реализовать метод залива в базу данных ( insert_database )
+        
+        1. Реализовать класс Pool
+        
+        1.1 Реализовать метод __add__                                       +
+        1.2 Реализовать метод remove
+        
+        2. Рефлизовать метод worker
+        
+        2.1 Реализовать функцию code_create()                               +
+        2.2 Реализовать функцию get_vk_response()                           +
+        2.3 Протестировать функции code_create() и get_vk_response()
+        2.4 Реализовать обработку "плохих" ответов от сервера vk
+        
+        3. Реализовать цикл планировщика
+        3.1 Реализовать обработку select'ов
+        3.2 Реализовать цикл добавления                                     +
+        3.3 Реализовать цикл удаления
+        
+        4. Протестировать все приложение целиком
+        
+        """
+
+
+class User:
+
+    def __init__(self, id):
+        self.id = id
+        self.online = 0
+        self.last_seen = 0
+        self.session_time = 0
+
+    def set_new_data(self, id, online, last_seen):
+        pass
+
+
+class Pool:
+
+    def __int__(self):
+        self.users_list = []
+        self.size = 0
+        self.users_list_buffer = []  # ??
+        self.bad_list_buffer = []    # ?
+        self.user_ids = []
+
+    def free_space(self):
+        return config.MAX_USERS_IN_EXECUTE - size - len(self.users_list_buffer)
+
+    def add(self, ids):
+        self.users_list_buffer.extend(ids)
+
+    def __add__(self):
+        for id in self.users_list_buffer:
+            self.users_list.append(User(id))
+            if self.size % config.MAX_USERS_IN_USERS_GET == 0:
+                self.user_ids.append([id])
+            else:
+                self.user_ids[-1] += ',' + id
+            self.size += 1
+        self.users_list_buffer = []
+
+    def remove(self, id):
+        pass
+        # for s in self.user_ids:
+        #    if s.find(id) is not None:     # !!!
+        #        s.remove(id)
+
+    def get_ids_list(self):
+        return self.user_ids
+
+
+def code_create(ids_in_str:list):
+    code_body = config.CODE_TEMPLATE
+    code_return = config.RETURN_CODE_TEMPLATE
+    code_body = code_body % ('a0', ids_in_str[0])
+    code_return = code_return % ('a0', 'a0', 'a0')
+    for i in range(1, len(ids_in_str) - 1):
+        code_body += config.CODE_TEMPLATE
+        code_return += config.RETURN_CODE_TEMPLATE
+        code_body = code_body % ('a' + str(i), ids_in_str[i])
+        code_return = code_return % ('a' + str(i), 'a' + str(i), 'a' + str(i))
+    return code_body + ' return [%s];' % code_return
+
+
+def parse_response(r):
+    id = []
+    online = []
+    t = []
+    for i in r:
+        id.extend(i[0])
+        online.extend(i[1])
+        t.extend(i[2])
+    return [id, online, t]
+
+
+def get_vk_response(code):
+    r = requests.get(config.EXECUTE_URL, params={'code': code})
+    r = r.json()
+    if 'response' in r:
+        return parse_response(r)
+    else:
+        print(' ERROR get_vk_response ')
+        exit(-1)
+
+
+def worker(p:Pool):
+    if len(p.users_list) == 0:
+        return
+    code = code_create(p.get_ids_list)
+    resp = get_vk_response(code)
+    i = 0
+    # обновление объектов
+    for u in p.users_list:
+        u.set_new_data(resp[0][i], resp[1][i], resp[2][i])
+        i += 1
+
+    # обновление базы данных
+    # добавление новых юзеров если есть
+    p.__add__()
+
+    time.sleep(config.PERIOD_SEC)
+
+
+
+
+def get_new():
+    pass
+
+def get_bad():
+    pass
+
+
+# Все необзодимое
+
+pool_list = []
+size = 0
+
+while True:
+    # цикл обработки select'ов
+
+    # цикл добавления
+    # в результате могут создаваться новые пулы
+    u = get_new()
+    if len(u) != 0:
+        if size == 0:
+            pool_list.append(Pool())
+            size = 1
+
+        length = len(u)
+        ptr = 0
+        i = 0
+        while ptr < length | i < size:
+            m = pool_list[i].free_space()
+            if m > 0:
+                pool_list[i].add(u[ptr : min(length,m + ptr) : 1])
+                ptr = min(length, m + ptr)
+            i += 1
+
+        while ptr < length:
+            p = Pool()
+            p.add(u[ptr : min(length, config.MAX_USERS_IN_EXECUTE) : 1])
+            pool_list.append(p)
+            size += 1
+            # создание нового потока
+
+    # цикл удалений
+    # в результате могут быть удалены пулы
+    u = get_bad()
+    if len(u) > 0:
+        for p in pool_list:
+            for id in u:
+                p.remove(id)
